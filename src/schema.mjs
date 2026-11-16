@@ -87,6 +87,17 @@ function normalizeCwd(value) {
   return text;
 }
 
+// A shell line run inside the popup before the command; its first output line
+// replaces {} in the command. Empty means no pick step.
+function normalizePick(value, type, command) {
+  if (value === undefined || value === null || value === '') return '';
+  const pick = requireText(value, 'pick', MAX_COMMAND_LENGTH);
+  if (/[\r\n]/u.test(pick)) throw new ConfigError('pick must be a single line');
+  if (type === 'plugin_action') throw new ConfigError('pick works only with shell and pane commands');
+  if (!command.includes('{}')) throw new ConfigError('a command with pick must contain {} where the picked value goes');
+  return pick;
+}
+
 function normalizeDescription(value) {
   if (value === undefined || value === null) return '';
   if (typeof value !== 'string') throw new ConfigError('description must be a string');
@@ -131,12 +142,15 @@ export function normalizeCommand(value, { existingIds = [], existingSlots = [] }
       throw new ConfigError(`slot must be one character from "${SLOT_KEYS}"`);
     }
   }
+  const pick = normalizePick(value.pick, type, command);
   return {
     id,
     slot,
     label,
     type,
     command,
+    // Only present when set, so commands without a pick step keep their old shape.
+    ...(pick ? { pick } : {}),
     cwd: normalizeCwd(value.cwd),
     description: normalizeDescription(value.description),
   };

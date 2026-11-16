@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { isLightTerminal } from '../src/appearance.mjs';
-import { readContext } from '../src/context.mjs';
+import { readContext, resolveCwd } from '../src/context.mjs';
+import { buildShellSpawn, shellQuote } from '../src/executor.mjs';
 import { guardAsciiInput } from '../src/input-source.mjs';
 import { resolveEditors } from '../src/editor.mjs';
 import { herdrConfigPath, readImportable } from '../src/herdr-config.mjs';
@@ -46,6 +47,43 @@ function diagnostic(stderr, message) {
   } catch {
     // Never let a diagnostic keep the terminal in raw mode.
   }
+}
+
+const MAX_PICK_BYTES = 64_000;
+
+// Runs a command's pick step on the popup's own terminal: stdin and stderr stay
+// on the tty (fzf draws on /dev/tty anyway), stdout is captured. Resolves to the
+// first output line, or null when the step was cancelled, failed or printed nothing.
+export function runPick(command, { spawn, env, context }) {
+  const { file, args, options } = buildShellSpawn(
+    { command: command.pick },
+    { cwd: resolveCwd(command, context), shell: env.SHELL },
+  );
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(file, args, {
+        cwd: options.cwd,
+        shell: false,
+        stdio: ['inherit', 'pipe', 'inherit'],
+        // The popup itself is the focused pane now, so the step is told which pane it was opened over.
+        env: { ...env, COMMAND_CENTER_PANE_ID: context?.focusedPaneId ?? '' },
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+    let output = '';
+    child.stdout?.setEncoding?.('utf8');
+    child.stdout?.on('data', (chunk) => {
+      if (output.length < MAX_PICK_BYTES) output += chunk;
+    });
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => {
+      const value = output.split('\n', 1)[0].trim();
+      resolve(code === 0 && value.length > 0 ? value : null);
+    });
+  });
 }
 
 function screenSize(stdout, color, light) {
@@ -109,6 +147,9 @@ export async function runPopup({
   }
 
   let rawMode = false;
+  // Driven by hand rather than by for-await: leaving a for-await destroys stdin,
+  // and a cancelled pick step has to come back to the list on the same stream.
+  let keys = null;
   let stopCode = null;
   const restoreRaw = () => {
     if (!rawMode) return;
@@ -177,6 +218,26 @@ export async function runPopup({
     rawMode = true;
 
     const decoder = createKeyDecoder();
+    // Runs a pick step on this terminal and comes back to the list afterwards.
+    // pause() is what stops this process reading the tty, so the step gets every
+    // keystroke instead of racing us for them.
+    const pickOnThisTerminal = async (command) => {
+      processRef.removeListener?.('SIGWINCH', onResize);
+      stdout.removeListener?.('resize', onResize);
+      restoreRaw();
+      stdin.pause?.();
+      stdout.write(`${CLEAR_SCREEN}${DEFAULT_CURSOR_SHAPE}${SHOW_CURSOR}`);
+      try {
+        return await runPick(command, { spawn, env, context });
+      } finally {
+        if (stopCode === null) {
+          stdin.setRawMode(true);
+          rawMode = true;
+          processRef.on('SIGWINCH', onResize);
+          stdout.on?.('resize', onResize);
+        }
+      }
+    };
     draw();
     // After the first paint, not before: hopping the input source costs an
     // osascript launch, and the popup must not wait on it to appear. The
@@ -184,8 +245,10 @@ export async function runPopup({
     // however the popup ends.
     void guardAsciiInput({ env, platform, execFile, spawn, execPath, pid: processRef.pid });
 
-    for await (const chunk of stdin) {
-      if (stopCode !== null) break;
+    keys = stdin[Symbol.asyncIterator]();
+    for (;;) {
+      const { value: chunk, done } = await keys.next();
+      if (done || stopCode !== null) break;
       for (const key of decoder.push(chunk)) {
         view = reduceKey(view, key, { columns: gridColumns(view, screenSize(stdout, useColor, light)) });
         const { effect } = view;
@@ -195,6 +258,20 @@ export async function runPopup({
         }
         if (effect.type === 'close') return 0;
         if (effect.type === 'run') {
+          if (effect.command.pick) {
+            const value = await pickOnThisTerminal(effect.command);
+            if (stopCode !== null) return stopCode;
+            // Cancelled, failed or printed nothing: back to the list, as if enter was never pressed.
+            if (value === null) {
+              draw();
+              continue;
+            }
+            await recordUsage(usageFile, usage, effect.command.id);
+            // Dropped, not just ignored: with {} filled in, the runner's re-validation would reject a leftover pick.
+            const { pick: _done, ...rest } = effect.command;
+            spawnRunner({ kind: 'run', command: { ...rest, command: rest.command.replaceAll('{}', shellQuote(value)) } });
+            return 0;
+          }
           // Recorded from either view, so switching to the palette starts with real history.
           await recordUsage(usageFile, usage, effect.command.id);
           spawnRunner({ kind: 'run', command: effect.command });
@@ -261,6 +338,12 @@ export async function runPopup({
       // The pane is going away regardless; never mask the real exit code.
     }
     restoreRaw();
+    // What leaving the for-await used to do: end the stream so the process can exit.
+    try {
+      await keys?.return?.();
+    } catch {
+      // Already ended.
+    }
     for (const [signal, handler] of signalHandlers) processRef.removeListener?.(signal, handler);
     processRef.removeListener?.('SIGWINCH', onResize);
     stdout.removeListener?.('resize', onResize);

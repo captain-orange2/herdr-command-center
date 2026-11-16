@@ -7,7 +7,7 @@ import { parseConfigToml, renderCommandBlock } from './toml-config.mjs';
 const HEADER = /^\[\[commands\]\][ \t]*$/;
 // Every field a command has. Omitting one would make a change to it look like
 // no change at all, and the old block text would be reused verbatim.
-const COMPARED_KEYS = Object.freeze(['id', 'slot', 'label', 'type', 'command', 'cwd', 'description']);
+const COMPARED_KEYS = Object.freeze(['id', 'slot', 'label', 'type', 'command', 'pick', 'cwd', 'description']);
 
 function isBlankOrComment(line) {
   const trimmed = line.trim();
@@ -61,7 +61,7 @@ export function joinDocument(segments) {
 
 function sameCommand(left, right) {
   if (!left || !right) return false;
-  return COMPARED_KEYS.every((key) => left[key] === right[key]);
+  return COMPARED_KEYS.every((key) => (left[key] ?? '') === (right[key] ?? ''));
 }
 
 export function applyCommands(text, commands) {

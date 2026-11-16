@@ -4,7 +4,8 @@ import { ConfigError } from './schema.mjs';
 
 // Key order is fixed so a block the popup rewrites still reads like the ones the
 // user wrote by hand.
-const COMMAND_KEYS = Object.freeze(['id', 'slot', 'label', 'type', 'command', 'cwd', 'description']);
+const COMMAND_KEYS = Object.freeze(['id', 'slot', 'label', 'type', 'command', 'pick', 'cwd', 'description']);
+const OPTIONAL_KEYS = Object.freeze(new Set(['pick', 'description']));
 const SIMPLE_ESCAPES = Object.freeze({
   '\\': '\\\\',
   '"': '\\"',
@@ -40,8 +41,8 @@ function keyValue(key, value) {
 export function renderCommandBlock(command) {
   const lines = ['[[commands]]'];
   for (const key of COMMAND_KEYS) {
-    // An empty description would just be noise in a file meant to be read.
-    if (key === 'description' && !command[key]) continue;
+    // An empty optional key would just be noise in a file meant to be read.
+    if (OPTIONAL_KEYS.has(key) && !command[key]) continue;
     lines.push(keyValue(key, command[key]));
   }
   return `${lines.join('\n')}\n`;

@@ -84,6 +84,8 @@ function formFor(command, doc) {
     caret: caretForField(fields, 'label'),
     slotChoices: available,
     fields,
+    // Not editable in the form; kept so an edit cannot silently drop it.
+    pick: command.pick ?? '',
   };
 }
 
@@ -349,6 +351,7 @@ function submitForm(view) {
       label: form.fields.label,
       type: form.fields.type,
       command: form.fields.command,
+      pick: form.pick ?? '',
       cwd: form.fields.cwd,
       description: form.fields.description,
     }, { existingIds, existingSlots });

@@ -250,6 +250,28 @@ the grid: `Tab` switches to it, and `Tab` (or finishing a form) brings you
 back. Last-run times are kept in `usage.json` in the plugin's state directory
 and are recorded from both views. Deleting that file only resets the ranking.
 
+### Picking a value first
+
+A `shell` or `pane` command can ask a question before it runs. `pick` is a
+shell line that runs **inside the popup**, on its terminal, so an `fzf`
+menu or a `read -p` prompt appears right where the command list was. Its
+first line of output replaces `{}` in `command`, single-quoted, and the
+command then runs after the popup closes, like any other:
+
+```toml
+[[commands]]
+label = "Check out a branch"
+type = "pane"
+command = "git switch {}"
+pick = "git branch --format='%(refname:short)' | fzf"
+```
+
+The pick step runs in the command's `cwd` and gets `COMMAND_CENTER_PANE_ID`,
+the pane the popup was opened over, because while the popup is open the
+focused pane is the popup itself. If the step exits non-zero or prints
+nothing (`Esc` in fzf, say), you are back in the list and nothing runs. The form
+cannot edit `pick`; set it in the file, and edits made in the form keep it.
+
 ### Where the output goes
 
 | `type` | What happens |
