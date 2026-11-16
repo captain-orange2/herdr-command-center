@@ -5,6 +5,8 @@ import { COMMON_EDITORS } from './editor.mjs';
 export const SCHEMA_VERSION = 1;
 export const COMMAND_TYPES = Object.freeze(['shell', 'pane', 'plugin_action']);
 export const CWD_MODES = Object.freeze(['focused', 'workspace']);
+// Which list the popup opens on. Static: set in commands.toml, never toggled at runtime.
+export const VIEWS = Object.freeze(['grid', 'palette']);
 
 const MAX_LABEL_LENGTH = 80;
 const MAX_COMMAND_LENGTH = 2_000;
@@ -150,6 +152,12 @@ function normalizeEditor(value) {
   return value.map((entry, index) => requireText(entry, `editor[${index}]`, 512));
 }
 
+function normalizeView(value) {
+  if (value === undefined || value === null) return 'grid';
+  if (!VIEWS.includes(value)) throw new ConfigError(`view must be one of ${VIEWS.join(', ')}`);
+  return value;
+}
+
 export function normalizeConfig(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ConfigError('commands.toml must contain a TOML table');
@@ -184,12 +192,18 @@ export function normalizeConfig(value) {
     existingSlots.push(normalized.slot);
     commands.push(normalized);
   });
-  return { schema_version: SCHEMA_VERSION, editor: normalizeEditor(value.editor), commands };
+  return {
+    schema_version: SCHEMA_VERSION,
+    view: normalizeView(value.view),
+    editor: normalizeEditor(value.editor),
+    commands,
+  };
 }
 
 export function defaultConfig() {
   return {
     schema_version: SCHEMA_VERSION,
+    view: 'grid',
     // Seeded with every editor the plugin knows about, in preference order, so
     // the choice is visible and editable in the file rather than hidden in a
     // PATH lookup. Whatever is not installed is filtered out before the picker

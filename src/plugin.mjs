@@ -5,6 +5,7 @@ export const CONFIG_FILE_NAME = 'commands.toml';
 // original rather than deleting it.
 export const LEGACY_CONFIG_FILE_NAME = 'commands.json';
 export const RUN_LOG_FILE_NAME = 'run.log';
+export const USAGE_FILE_NAME = 'usage.json';
 // Config/state paths come from herdr or from the CLI; bound them so a hostile or
 // corrupted value can never be spliced into a spawn.
 export const MAX_PATH_BYTES = 16_384;

@@ -162,8 +162,8 @@ test('the seeded editor list fits inside the editor cap', () => {
   assert.ok(normalizeConfig({ editor: [...COMMON_EDITORS, 'my-editor'] }).editor.length > COMMON_EDITORS.length);
 });
 
-test('normalizeConfig fills missing schema_version, editor, and commands', () => {
-  assert.deepEqual(normalizeConfig({}), { schema_version: 1, editor: [], commands: [] });
+test('normalizeConfig fills missing schema_version, view, editor, and commands', () => {
+  assert.deepEqual(normalizeConfig({}), { schema_version: 1, view: 'grid', editor: [], commands: [] });
 });
 
 test('an empty editor list means auto-detect rather than an error', () => {

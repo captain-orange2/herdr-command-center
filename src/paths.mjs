@@ -2,7 +2,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { CONFIG_FILE_NAME, LEGACY_CONFIG_FILE_NAME, MAX_PATH_BYTES, PLUGIN_ID, RUN_LOG_FILE_NAME } from './plugin.mjs';
+import { CONFIG_FILE_NAME, LEGACY_CONFIG_FILE_NAME, MAX_PATH_BYTES, PLUGIN_ID, RUN_LOG_FILE_NAME, USAGE_FILE_NAME } from './plugin.mjs';
 
 const execFileAsync = promisify(execFileCallback);
 
@@ -56,4 +56,8 @@ export function legacyCommandsPath(configDir) {
 
 export function runLogPath(stateDir) {
   return join(stateDir, RUN_LOG_FILE_NAME);
+}
+
+export function usagePath(stateDir) {
+  return join(stateDir, USAGE_FILE_NAME);
 }

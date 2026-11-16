@@ -16,11 +16,12 @@ import { guardAsciiInput } from '../src/input-source.mjs';
 import { resolveEditors } from '../src/editor.mjs';
 import { herdrConfigPath, readImportable } from '../src/herdr-config.mjs';
 import { createKeyDecoder } from '../src/keys.mjs';
-import { commandsPath, resolveConfigDir, resolveStateDir, runLogPath } from '../src/paths.mjs';
+import { commandsPath, resolveConfigDir, resolveStateDir, runLogPath, usagePath } from '../src/paths.mjs';
 import { pluginsJsonPath, readInstalledPluginGroups } from '../src/plugin-actions.mjs';
 import { gridColumns, renderView, textCursor } from '../src/render.mjs';
 import { ConfigError } from '../src/schema.mjs';
 import { ensureStore, saveStore } from '../src/store.mjs';
+import { loadUsage, recordUsage } from '../src/usage.mjs';
 import { beginEditorPick, beginImport, createView, reduceKey } from '../src/view.mjs';
 
 const execFileAsync = promisify(execFileCallback);
@@ -80,7 +81,10 @@ export async function runPopup({
     return 2;
   }
   const commandsFile = commandsPath(configDir);
-  const logFile = runLogPath(resolveStateDir(configDir, env));
+  const stateDir = resolveStateDir(configDir, env);
+  const logFile = runLogPath(stateDir);
+  const usageFile = usagePath(stateDir);
+  const usage = await loadUsage(usageFile);
   const context = readContext(env);
   const useColor = !env.NO_COLOR && env.TERM !== 'dumb';
   const light = isLightTerminal(env);
@@ -89,7 +93,7 @@ export async function runPopup({
   let raw = null;
   try {
     const loaded = await ensureStore(commandsFile);
-    view = createView({ doc: loaded.doc });
+    view = createView({ doc: loaded.doc, usage });
     raw = loaded.raw;
   } catch (error) {
     if (!(error instanceof ConfigError)) {
@@ -191,6 +195,8 @@ export async function runPopup({
         }
         if (effect.type === 'close') return 0;
         if (effect.type === 'run') {
+          // Recorded from either view, so switching to the palette starts with real history.
+          await recordUsage(usageFile, usage, effect.command.id);
           spawnRunner({ kind: 'run', command: effect.command });
           return 0;
         }
@@ -210,6 +216,7 @@ export async function runPopup({
           if (candidates.length === 0) {
             view = createView({
               doc: view.doc,
+              usage,
               error: 'no editor found; set editor = ["your-editor"] in commands.toml, or $EDITOR',
             });
             draw();
@@ -232,7 +239,7 @@ export async function runPopup({
           try {
             const saved = await saveStore(commandsFile, effect.doc, { expectedRaw: raw });
             raw = saved.raw;
-            view = createView({ doc: effect.doc, cursor: effect.cursor });
+            view = createView({ doc: effect.doc, cursor: effect.cursor, usage });
           } catch (error) {
             if (!(error instanceof ConfigError)) throw error;
             view = createView({ doc: effect.doc, error: error.message });

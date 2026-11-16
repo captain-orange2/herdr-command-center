@@ -52,7 +52,7 @@ export function renderCommandBlock(command) {
 // go through applyCommands in toml-edit.mjs so comments survive.
 export function renderConfigToml(doc) {
   const editor = doc.editor.map((entry) => `"${escapeTomlString(entry)}"`).join(', ');
-  const header = `schema_version = ${doc.schema_version}\neditor = [${editor}]\n`;
+  const header = `schema_version = ${doc.schema_version}\nview = "${escapeTomlString(doc.view ?? 'grid')}"\neditor = [${editor}]\n`;
   if (doc.commands.length === 0) return header;
   return `${header}\n${doc.commands.map((command) => renderCommandBlock(command)).join('\n')}`;
 }

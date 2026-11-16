@@ -1,6 +1,6 @@
 import { SLOT_KEYS } from './schema.mjs';
 import { clipLine, displayWidth, wrap } from './text.mjs';
-import { CHOICE_FIELDS, CHOICE_VALUES, commandInSlot, FORM_FIELDS, graphemesOf, gridRows } from './view.mjs';
+import { CHOICE_FIELDS, CHOICE_VALUES, commandInSlot, FORM_FIELDS, graphemesOf, gridRows, paletteResults } from './view.mjs';
 
 // Matches the popup size declared in herdr-plugin.toml, used when a caller has
 // no TTY dimensions to offer.
@@ -12,6 +12,13 @@ const PADDING_X = 2;
 const PADDING_Y = 1;
 
 const LIST_FOOTER = '[↑↓←→] move · [enter] run · [slot key] runs · [shift+a] add · [shift+e] edit · [shift+d] delete · [shift+o] edit file · [shift+i] import · [esc] close';
+const PALETTE_FOOTER = 'type to search · [↑↓] move · [enter] run · [tab] manage commands · [esc] clear / close';
+
+// Palette users reach the grid with tab to manage commands, so it tells them the way back.
+function listFooter(view) {
+  return view.doc?.view === 'palette' ? `${LIST_FOOTER} · [tab] back to search` : LIST_FOOTER;
+}
+
 const FORM_FOOTER = 'type to edit · [tab/↑↓] field · [←→] move cursor / change · [enter] save · [esc] cancel';
 const CONFIRM_FOOTER = '[y] delete · any other key cancels';
 const ERROR_FOOTER = '[shift+o] edit file · [esc] close';
@@ -331,7 +338,49 @@ function importBody(view, width, budget, color) {
   return lines;
 }
 
+function paletteBody(view, width, budget, color) {
+  const total = (view.doc.commands ?? []).length;
+  const results = paletteResults(view);
+  const title = clipLine(`Command Center · ${results.length}/${total} command${total === 1 ? '' : 's'}`, width);
+  // The search line's position is mirrored by textCursor: title, blank, search.
+  const lines = [color ? styles.bold(title) : title, '', clipLine(`› ${view.query ?? ''}`, width), ''];
+  if (results.length === 0) {
+    const message = total === 0
+      ? 'No commands yet. Press tab to add, import or edit them in the grid.'
+      : 'No command matches the search.';
+    lines.push(...wrap(message, width));
+    return lines;
+  }
+  const cursor = Math.max(0, Math.min(results.length - 1, view.paletteCursor ?? 0));
+  const selected = results[cursor];
+  const detail = clipLine(`${selected.type} · ${selected.command}`, width);
+  // Held back: the "more" hint, a blank line and the detail line.
+  const rowBudget = Math.max(1, budget - lines.length - 3);
+  const first = Math.max(0, cursor - rowBudget + 1);
+  const shown = results.slice(first, first + rowBudget);
+  // Descriptions start in one column, capped so a long label cannot push them off screen.
+  const nameWidth = Math.min(Math.floor(width / 2), 2 + Math.max(...shown.map((command) => displayWidth(command.label))));
+  shown.forEach((command, offset) => {
+    const focused = first + offset === cursor;
+    const clipped = clipLine(`${focused ? '›' : ' '} ${command.label}`, nameWidth);
+    const name = clipped + ' '.repeat(Math.max(0, nameWidth - displayWidth(clipped)));
+    const room = width - displayWidth(name);
+    const note = command.description && room > 4 ? clipLine(`   ${command.description}`, room) : '';
+    if (!color) lines.push(name + note);
+    else if (focused) lines.push(styles.bold(styles.cyan(name + note)));
+    else lines.push(name + (note ? styles.dim(note) : ''));
+  });
+  const below = results.length - first - rowBudget;
+  if (below > 0) {
+    const hint = clipLine(`↓ ${below} more`, width);
+    lines.push(color ? styles.dim(hint) : hint);
+  }
+  lines.push('', color ? styles.dim(detail) : detail);
+  return lines;
+}
+
 const BODIES = Object.freeze({
+  palette: paletteBody,
   list: listBody,
   form: formBody,
   'confirm-delete': confirmBody,
@@ -341,7 +390,8 @@ const BODIES = Object.freeze({
 });
 
 const FOOTERS = Object.freeze({
-  list: LIST_FOOTER,
+  palette: PALETTE_FOOTER,
+  list: listFooter,
   form: FORM_FOOTER,
   'confirm-delete': CONFIRM_FOOTER,
   error: ERROR_FOOTER,
@@ -381,6 +431,7 @@ export function renderLines(view, size = {}) {
 // Choice fields get no cursor — they are changed with the arrow keys, and showing
 // a text caret on them would promise typing that does nothing.
 export function textCursor(view, size = {}) {
+  if (view?.mode === 'palette') return paletteCursorAt(view, size);
   if (view?.mode !== 'form' || !view.form) return null;
   const field = FORM_FIELDS[view.form.fieldIndex];
   if (!field || CHOICE_FIELDS.has(field)) return null;
@@ -399,6 +450,17 @@ export function textCursor(view, size = {}) {
   const caret = Math.max(0, Math.min(view.form.caret ?? graphemes.length, graphemes.length));
   const typed = displayWidth(graphemes.slice(0, caret).join(''));
   const column = Math.min(valueColumn + typed, width - 1);
+  return { row: PADDING_Y + bodyLine, column: PADDING_X + column };
+}
+
+function paletteCursorAt(view, size) {
+  const { outerWidth, outerHeight } = boundedSize(size);
+  const width = Math.max(1, outerWidth - PADDING_X * 2);
+  const height = Math.max(1, outerHeight - PADDING_Y * 2);
+  const bodyBudget = Math.max(1, height - wrap(PALETTE_FOOTER, width).length);
+  const bodyLine = 2; // title, blank line, then the search line
+  if (bodyLine >= bodyBudget) return null;
+  const column = Math.min(2 + displayWidth(view.query ?? ''), width - 1);
   return { row: PADDING_Y + bodyLine, column: PADDING_X + column };
 }
 

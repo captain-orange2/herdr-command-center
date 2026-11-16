@@ -56,16 +56,17 @@ export async function saveStore(file, doc, { expectedRaw = null } = {}) {
   // blocks changed and a splice could not express it.
   let raw;
   if (typeof expectedRaw === 'string') {
-    let previousEditor = null;
+    let previous = null;
     try {
-      previousEditor = normalizeConfig(parseConfigToml(expectedRaw, basename(file))).editor;
+      previous = normalizeConfig(parseConfigToml(expectedRaw, basename(file)));
     } catch {
-      previousEditor = null;
+      previous = null;
     }
-    const editorUnchanged = Array.isArray(previousEditor)
-      && previousEditor.length === normalized.editor.length
-      && previousEditor.every((entry, index) => entry === normalized.editor[index]);
-    raw = editorUnchanged
+    const headerUnchanged = previous !== null
+      && previous.view === normalized.view
+      && previous.editor.length === normalized.editor.length
+      && previous.editor.every((entry, index) => entry === normalized.editor[index]);
+    raw = headerUnchanged
       ? applyCommands(expectedRaw, normalized.commands)
       : renderConfigToml(normalized);
   } else {

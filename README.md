@@ -227,6 +227,29 @@ Trim the list to one entry to stop being asked.
 
 ![The popup showing a TOML parse error with the line number](docs/popup-error.png)
 
+### Grid or palette
+
+`view` picks what the popup opens on. It is read when the popup opens and
+never changes while it is open:
+
+```toml
+view = "palette"   # or "grid", the default
+```
+
+- **grid** is the slot grid described above.
+- **palette** opens on a search line. Type and the list narrows to commands
+  whose label or description matches. Every word you type has to match one
+  of the two, and the match is fuzzy, so `ovs` finds "Open in VS Code".
+  Results are ranked by match quality plus a bonus for recent use that halves
+  every day, so with an empty search the list is simply most-recently-used
+  first. `↑`/`↓` move, `Enter` runs, and `Esc` clears the search, or closes
+  the popup when the search is already empty.
+
+In the palette every letter types, so adding, editing and importing live in
+the grid: `Tab` switches to it, and `Tab` (or finishing a form) brings you
+back. Last-run times are kept in `usage.json` in the plugin's state directory
+and are recorded from both views. Deleting that file only resets the ranking.
+
 ### Where the output goes
 
 | `type` | What happens |

@@ -1,9 +1,15 @@
+import { rankCommands } from './palette.mjs';
 import { COMMAND_TYPES, ConfigError, CWD_MODES, normalizeCommand, SLOT_KEYS } from './schema.mjs';
 
-export const MODES = Object.freeze(['list', 'form', 'confirm-delete', 'error', 'import', 'editor-pick']);
+export const MODES = Object.freeze(['list', 'form', 'confirm-delete', 'error', 'import', 'editor-pick', 'palette']);
 export const FORM_FIELDS = Object.freeze(['label', 'slot', 'type', 'command', 'cwd', 'description']);
 export const CHOICE_FIELDS = Object.freeze(new Set(['slot', 'type', 'cwd']));
 export const CHOICE_VALUES = Object.freeze({ type: COMMAND_TYPES, cwd: CWD_MODES });
+
+// Where every sub-screen returns to: the view commands.toml chose.
+export function homeMode(doc) {
+  return doc?.view === 'palette' ? 'palette' : 'list';
+}
 
 function clampCursor(index, length) {
   if (length <= 0) return 0;
@@ -81,10 +87,10 @@ function formFor(command, doc) {
   };
 }
 
-export function createView({ doc, error = null, cursor = 0 } = {}) {
+export function createView({ doc, error = null, cursor = 0, usage = {} } = {}) {
   if (!doc || typeof doc !== 'object') throw new TypeError('a config document is required');
   return {
-    mode: error ? 'error' : 'list',
+    mode: error ? 'error' : homeMode(doc),
     doc,
     error: error ?? null,
     formError: null,
@@ -96,6 +102,9 @@ export function createView({ doc, error = null, cursor = 0 } = {}) {
     importTitle: null,
     editorChoices: [],
     editorCursor: 0,
+    query: '',
+    paletteCursor: 0,
+    usage,
     effect: null,
   };
 }
@@ -152,7 +161,7 @@ function reduceImport(view, key) {
         importBack: back.slice(0, -1),
       };
     }
-    return { ...view, mode: 'list', importEntries: [], importCursor: 0, importBack: [], importTitle: null };
+    return { ...view, mode: homeMode(view.doc), importEntries: [], importCursor: 0, importBack: [], importTitle: null };
   }
   if (key === 'up') return { ...view, importCursor: step(view.importCursor, -1, entries.length) };
   if (key === 'down') return { ...view, importCursor: step(view.importCursor, 1, entries.length) };
@@ -200,13 +209,13 @@ function reduceImport(view, key) {
 
 function reduceEditorPick(view, key) {
   const choices = view.editorChoices ?? [];
-  if (key === 'escape') return { ...view, mode: 'list', editorChoices: [], editorCursor: 0 };
+  if (key === 'escape') return { ...view, mode: homeMode(view.doc), editorChoices: [], editorCursor: 0 };
   if (key === 'up') return { ...view, editorCursor: step(view.editorCursor, -1, choices.length) };
   if (key === 'down') return { ...view, editorCursor: step(view.editorCursor, 1, choices.length) };
   const chosen = (index) => {
     const editor = choices[index];
     if (!editor) return view;
-    return { ...view, mode: 'list', effect: { type: 'open-config', editor } };
+    return { ...view, mode: homeMode(view.doc), effect: { type: 'open-config', editor } };
   };
   if (key === 'enter') return chosen(view.editorCursor);
   if (/^[1-9]$/u.test(key)) return chosen(Number(key) - 1);
@@ -240,6 +249,7 @@ function moveCursor(view, key, columns) {
 
 function reduceList(view, key, columns) {
   if (key === 'escape') return { ...view, effect: { type: 'close' } };
+  if (key === 'tab' && view.doc.view === 'palette') return { ...view, mode: 'palette' };
   if (key === 'A') return { ...view, mode: 'form', formError: null, form: emptyForm(view.doc) };
   if (key === 'O') return { ...view, effect: { type: 'open-config' } };
   if (key === 'I') return { ...view, effect: { type: 'load-import' } };
@@ -271,14 +281,38 @@ function reduceList(view, key, columns) {
   return view;
 }
 
+export function paletteResults(view) {
+  return rankCommands(view.doc.commands ?? [], view.query ?? '', view.usage ?? {});
+}
+
+// Every printable key types into the search, so management lives one tab away
+// in the grid rather than on letter keys here.
+function reducePalette(view, key) {
+  const query = view.query ?? '';
+  const typed = (text) => ({ ...view, query: text, paletteCursor: 0 });
+  if (key === 'escape') return query ? typed('') : { ...view, effect: { type: 'close' } };
+  if (key === 'tab') return { ...view, mode: 'list' };
+  const results = paletteResults(view);
+  if (key === 'up') return { ...view, paletteCursor: step(view.paletteCursor, -1, results.length) };
+  if (key === 'down') return { ...view, paletteCursor: step(view.paletteCursor, 1, results.length) };
+  if (key === 'enter') {
+    const command = results[clampCursor(view.paletteCursor, results.length)];
+    return command ? { ...view, effect: { type: 'run', command } } : view;
+  }
+  if (key === 'backspace') return typed(graphemesOf(query).slice(0, -1).join(''));
+  if (key === 'space') return typed(`${query} `);
+  if (typeof key === 'string' && [...key].length === 1) return typed(query + key);
+  return view;
+}
+
 function reduceConfirm(view, key) {
-  if (key !== 'y') return { ...view, mode: 'list' };
+  if (key !== 'y') return { ...view, mode: homeMode(view.doc) };
   const slot = slotAt(view.cursor);
   const commands = (view.doc.commands ?? []).filter((command) => command.slot !== slot);
   const doc = { ...view.doc, commands };
   // The cursor stays put: the slot is still there, it is just empty now.
   const cursor = view.cursor;
-  return { ...view, mode: 'list', doc, cursor, effect: { type: 'save', doc, cursor } };
+  return { ...view, mode: homeMode(doc), doc, cursor, effect: { type: 'save', doc, cursor } };
 }
 
 function setField(view, field, value) {
@@ -330,7 +364,7 @@ function submitForm(view) {
   const cursor = SLOT_KEYS.indexOf(command.slot);
   return {
     ...view,
-    mode: 'list',
+    mode: homeMode(doc),
     form: null,
     formError: null,
     doc,
@@ -381,7 +415,7 @@ function deleteBeforeCaret(view, field) {
 
 function reduceForm(view, key) {
   const { form } = view;
-  if (key === 'escape') return { ...view, mode: 'list', form: null, formError: null };
+  if (key === 'escape') return { ...view, mode: homeMode(view.doc), form: null, formError: null };
   if (key === 'enter') return submitForm(view);
   if (key === 'tab' || key === 'down') {
     return { ...view, form: focusField(view, step(form.fieldIndex, 1, FORM_FIELDS.length)) };
@@ -419,5 +453,6 @@ export function reduceKey(view, key, { columns = 1 } = {}) {
   if (cleared.mode === 'editor-pick') return reduceEditorPick(cleared, key);
   if (cleared.mode === 'import') return reduceImport(cleared, key);
   if (cleared.mode === 'form') return reduceForm(cleared, key);
+  if (cleared.mode === 'palette') return reducePalette(cleared, key);
   return reduceList(cleared, key, columns);
 }
